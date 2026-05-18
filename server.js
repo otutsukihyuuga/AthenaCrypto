@@ -6,52 +6,104 @@ import { z } from "zod";
 
 const widgetHtml = readFileSync("public/widget.html", "utf8");
 
-// ── CoinCap API v2 – completely free, no API key required ──────────────────
-const COINCAP_BASE = "https://api.coincap.io/v2";
+// ── CryptoCompare API – free, no key required for basic usage ──────────────
+const CC_BASE = "https://min-api.cryptocompare.com/data";
+const CC_IMG  = "https://www.cryptocompare.com";
 
-async function fetchAssets({ limit = 25, search = null } = {}) {
-  let url = `${COINCAP_BASE}/assets?limit=${limit}`;
-  if (search) url += `&search=${encodeURIComponent(search)}`;
-
+async function fetchTopCoins(limit = 25) {
+  // Fetch extra to account for coins that may lack USD data
+  const fetchLimit = Math.min(limit * 3, 150);
+  const url = `${CC_BASE}/top/mktcapfull?limit=${fetchLimit}&tsym=USD`;
   const res = await fetch(url, {
-    headers: {
-      Accept: "application/json",
-      "User-Agent": "athena-crypto-mcp/1.0",
-    },
+    headers: { Accept: "application/json", "User-Agent": "athena-crypto-mcp/1.0" },
   });
-  if (!res.ok) {
-    const body = await res.text().catch(() => "");
-    throw new Error(`CoinCap error ${res.status}: ${body.slice(0, 200)}`);
-  }
+  if (!res.ok) throw new Error(`CryptoCompare error ${res.status}`);
   const json = await res.json();
-  return json.data ?? [];
+  if (json.Response === "Error") throw new Error(json.Message ?? "CryptoCompare error");
+
+  // Filter to coins that have valid USD price data
+  const valid = (json.Data ?? []).filter(
+    (d) => d?.RAW?.USD?.PRICE > 0 && d?.CoinInfo?.Name
+  );
+
+  return valid.slice(0, limit).map((d, i) => normalizeCC(d, i + 1));
 }
 
-function normalizeAsset(a) {
-  const price = parseFloat(a.priceUsd) || null;
-  const marketCap = parseFloat(a.marketCapUsd) || null;
-  const volume = parseFloat(a.volumeUsd24Hr) || null;
-  const change24h = parseFloat(a.changePercent24Hr) || null;
-  const vwap24h = parseFloat(a.vwap24Hr) || null;
+async function fetchCoinsBySymbols(symbols) {
+  const fsyms = symbols.slice(0, 15).join(",");
+  const url = `${CC_BASE}/pricemultifull?fsyms=${encodeURIComponent(fsyms)}&tsyms=USD`;
+  const res = await fetch(url, {
+    headers: { Accept: "application/json", "User-Agent": "athena-crypto-mcp/1.0" },
+  });
+  if (!res.ok) throw new Error(`CryptoCompare pricemultifull error ${res.status}`);
+  const json = await res.json();
 
+  // Also need coin info for images — reuse top endpoint filtered
+  const infoUrl = `${CC_BASE}/top/mktcapfull?limit=100&tsym=USD`;
+  const infoRes = await fetch(infoUrl, { headers: { Accept: "application/json" } });
+  const infoJson = await infoRes.json();
+  const infoMap = {};
+  (infoJson.Data ?? []).forEach((d) => {
+    if (d?.CoinInfo?.Name) infoMap[d.CoinInfo.Name.toUpperCase()] = d.CoinInfo;
+  });
+
+  const coins = [];
+  for (const sym of symbols) {
+    const raw = json.RAW?.[sym]?.USD;
+    if (!raw || !raw.PRICE) continue;
+    const info = infoMap[sym.toUpperCase()] ?? {};
+    coins.push({
+      id: sym.toLowerCase(),
+      rank: raw.MKTCAPRANK ?? null,
+      name: info.FullName ?? raw.FROMSYMBOL ?? sym,
+      symbol: sym.toUpperCase(),
+      price: raw.PRICE ?? null,
+      marketCap: raw.MKTCAP ?? null,
+      volume: raw.TOTALVOLUME24H ?? null,
+      change1h: raw.CHANGEPCTHOUR ?? null,
+      change24h: raw.CHANGEPCT24HOUR ?? null,
+      image: info.ImageUrl ? `${CC_IMG}${info.ImageUrl}` : null,
+    });
+  }
+  return coins;
+}
+
+function normalizeCC(d, fallbackRank) {
+  const info = d.CoinInfo ?? {};
+  const raw  = d.RAW?.USD ?? {};
   return {
-    id: a.id,
-    rank: parseInt(a.rank, 10) || null,
-    name: a.name,
-    symbol: (a.symbol ?? "").toUpperCase(),
-    price,
-    marketCap,
-    volume,
-    change24h,
-    vwap24h,
-    // CoinCap icon CDN
-    image: `https://assets.coincap.io/assets/icons/${(a.symbol ?? "").toLowerCase()}@2x.png`,
+    id: (info.Name ?? "").toLowerCase(),
+    rank: raw.MKTCAPRANK ?? fallbackRank,
+    name: info.FullName ?? info.Name ?? "Unknown",
+    symbol: (info.Name ?? "").toUpperCase(),
+    price: raw.PRICE ?? null,
+    marketCap: raw.MKTCAP ?? null,
+    volume: raw.TOTALVOLUME24H ?? null,
+    change1h: raw.CHANGEPCTHOUR ?? null,
+    change24h: raw.CHANGEPCT24HOUR ?? null,
+    image: info.ImageUrl ? `${CC_IMG}${info.ImageUrl}` : null,
   };
 }
 
-function buildResponse(coins, { search = null, limit }) {
+// Simple coin-name→symbol lookup for search (CryptoCompare search by name)
+async function searchSymbols(query) {
+  const url = `${CC_BASE}/top/mktcapfull?limit=100&tsym=USD`;
+  const res = await fetch(url, { headers: { Accept: "application/json" } });
+  const json = await res.json();
+  const q = query.toLowerCase();
+  const matches = (json.Data ?? []).filter((d) => {
+    const name   = (d.CoinInfo?.FullName ?? "").toLowerCase();
+    const symbol = (d.CoinInfo?.Name ?? "").toLowerCase();
+    return name.includes(q) || symbol.includes(q);
+  });
+  return matches.slice(0, 10).map((d, i) => normalizeCC(d, i + 1));
+}
+
+function buildResponse(coins, { search = null }) {
   const top = coins[0];
-  const priceStr = top ? `$${parseFloat(top.price ?? 0).toLocaleString("en-US", { maximumFractionDigits: 2 })}` : "N/A";
+  const priceStr = top?.price
+    ? `$${top.price.toLocaleString("en-US", { maximumFractionDigits: 2 })}`
+    : "N/A";
   const summary = search
     ? `Found ${coins.length} result(s) for "${search}". ${top ? `${top.name} is at ${priceStr} USD.` : ""}`
     : `Showing top ${coins.length} cryptocurrencies by market cap. ${top ? `${top.name} leads at ${priceStr} USD.` : ""}`;
@@ -63,6 +115,9 @@ function buildResponse(coins, { search = null, limit }) {
       lastUpdated: new Date().toISOString(),
       ...(search ? { search } : {}),
     },
+    _meta: {
+      "openai/outputTemplate": "ui://widget/crypto-markets.html",
+    },
   };
 }
 
@@ -71,42 +126,45 @@ function buildResponse(coins, { search = null, limit }) {
 function createCryptoServer() {
   const server = new McpServer({ name: "crypto-markets", version: "1.0.0" });
 
-  // ── Resource: widget HTML ──────────────────────────────────────────────
   server.registerResource(
     "crypto-widget",
     "ui://widget/crypto-markets.html",
     { description: "Interactive crypto market dashboard" },
     async () => ({
-      contents: [
-        {
-          uri: "ui://widget/crypto-markets.html",
-          mimeType: "text/html+skybridge",
-          text: widgetHtml,
-          _meta: {
-            "openai/widgetPrefersBorder": true,
-            "openai/widgetDescription":
-              "Live cryptocurrency market dashboard – shows top coins ranked by market cap with live prices, 24H volume, and % change. Supports sorting by any column, searching by name/symbol, and loading 10/25/50 coins.",
+      contents: [{
+        uri: "ui://widget/crypto-markets.html",
+        mimeType: "text/html+skybridge",
+        text: widgetHtml,
+        _meta: {
+          "openai/widgetPrefersBorder": true,
+          "openai/widgetDescription":
+            "Live crypto market dashboard. Shows top coins by market cap with price, volume, 1H/24H % change. Supports timeframe toggle, Top 10/25/50 limit, search, and column sort.",
+          "openai/widgetDomain": "https://athenachat.bot",
+          "openai/widgetCSP": {
+            connect_domains: [
+              "https://min-api.cryptocompare.com",
+              "https://www.cryptocompare.com",
+            ],
+            resource_domains: [
+              "https://www.cryptocompare.com",
+            ],
           },
         },
-      ],
+      }],
     })
   );
 
-  // ── Tool 1: get_crypto_markets ─────────────────────────────────────────
+  // Tool 1: get_crypto_markets
   server.registerTool(
     "get_crypto_markets",
     {
       title: "Get Cryptocurrency Markets",
       description:
-        "Use this when the user asks about crypto prices, market data, top coins, Bitcoin, Ethereum, altcoins, or wants to see a crypto market overview. Returns live data from CoinCap and renders an interactive widget.",
+        "Use this when the user asks about crypto prices, top coins, Bitcoin, Ethereum, altcoins, or wants a market overview. Returns live data from CryptoCompare with an interactive widget.",
       inputSchema: {
         limit: z
-          .number()
-          .int()
-          .min(10)
-          .max(50)
-          .default(25)
-          .describe("Number of top coins to show by market cap rank (10, 25, or 50)"),
+          .number().int().min(10).max(50).default(25)
+          .describe("How many top coins to show by market cap (10, 25, or 50)"),
       },
       _meta: {
         "openai/outputTemplate": "ui://widget/crypto-markets.html",
@@ -117,9 +175,8 @@ function createCryptoServer() {
     },
     async ({ limit = 25 }) => {
       try {
-        const raw = await fetchAssets({ limit });
-        const coins = raw.map(normalizeAsset);
-        return buildResponse(coins, { limit });
+        const coins = await fetchTopCoins(limit);
+        return buildResponse(coins, {});
       } catch (err) {
         console.error("get_crypto_markets error:", err);
         return {
@@ -130,18 +187,16 @@ function createCryptoServer() {
     }
   );
 
-  // ── Tool 2: search_crypto ──────────────────────────────────────────────
+  // Tool 2: search_crypto
   server.registerTool(
     "search_crypto",
     {
       title: "Search Cryptocurrency",
       description:
-        "Use this when the user wants to find a specific cryptocurrency by name or ticker symbol (e.g. 'find Solana', 'search DOGE', 'show me Chainlink price'). Returns live market data for matching coins.",
+        "Use this when the user wants to find a specific cryptocurrency by name or ticker (e.g. 'find Solana', 'DOGE price', 'show me Chainlink'). Returns live price data for matching coins.",
       inputSchema: {
-        query: z
-          .string()
-          .min(1)
-          .describe("Coin name or symbol to search for (e.g. 'solana', 'DOGE', 'chainlink')"),
+        query: z.string().min(1)
+          .describe("Coin name or symbol to search for (e.g. 'solana', 'doge', 'chainlink')"),
       },
       _meta: {
         "openai/outputTemplate": "ui://widget/crypto-markets.html",
@@ -152,9 +207,8 @@ function createCryptoServer() {
     },
     async ({ query }) => {
       try {
-        const raw = await fetchAssets({ limit: 10, search: query });
-        const coins = raw.map(normalizeAsset);
-        return buildResponse(coins, { search: query, limit: coins.length });
+        const coins = await searchSymbols(query);
+        return buildResponse(coins, { search: query });
       } catch (err) {
         console.error("search_crypto error:", err);
         return {
@@ -173,7 +227,7 @@ function createCryptoServer() {
 const port = Number(process.env.PORT ?? 3000);
 const MCP_PATH = "/mcp";
 
-const CORS_HEADERS = {
+const CORS = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Methods": "POST, GET, DELETE, OPTIONS",
   "Access-Control-Allow-Headers": "content-type, mcp-session-id",
@@ -182,23 +236,19 @@ const CORS_HEADERS = {
 
 const httpServer = createServer(async (req, res) => {
   if (!req.url) { res.writeHead(400).end("Missing URL"); return; }
-
   const url = new URL(req.url, `http://${req.headers.host ?? "localhost"}`);
 
-  if (req.method === "OPTIONS") {
-    res.writeHead(204, CORS_HEADERS).end();
-    return;
-  }
+  if (req.method === "OPTIONS") { res.writeHead(204, CORS).end(); return; }
 
   if (req.method === "GET" && url.pathname === "/") {
-    res.writeHead(200, { "content-type": "application/json", ...CORS_HEADERS }).end(
-      JSON.stringify({ status: "ok", name: "crypto-markets-mcp", version: "1.0.0", source: "CoinCap API" })
+    res.writeHead(200, { "content-type": "application/json", ...CORS }).end(
+      JSON.stringify({ status: "ok", name: "crypto-markets-mcp", version: "1.0.0", source: "CryptoCompare API" })
     );
     return;
   }
 
   if (url.pathname.startsWith(MCP_PATH) && ["POST", "GET", "DELETE"].includes(req.method ?? "")) {
-    Object.entries(CORS_HEADERS).forEach(([k, v]) => res.setHeader(k, v));
+    Object.entries(CORS).forEach(([k, v]) => res.setHeader(k, v));
     const server = createCryptoServer();
     const transport = new StreamableHTTPServerTransport({
       sessionIdGenerator: undefined,
@@ -215,12 +265,12 @@ const httpServer = createServer(async (req, res) => {
     return;
   }
 
-  res.writeHead(404, CORS_HEADERS).end("Not Found");
+  res.writeHead(404, CORS).end("Not Found");
 });
 
 httpServer.listen(port, () => {
   console.log(`\n🪙  Crypto Markets MCP server`);
-  console.log(`   Data:      CoinCap API (free, no key)`);
+  console.log(`   Data:      CryptoCompare API (free, no key)`);
   console.log(`   Listening: http://localhost:${port}${MCP_PATH}`);
   console.log(`   Health:    http://localhost:${port}/\n`);
 });
