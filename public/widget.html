@@ -1,0 +1,480 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Crypto Markets</title>
+    <style>
+      :root {
+        --bg: #ffffff;
+        --bg-secondary: #f7f8fa;
+        --bg-hover: #f0f2f7;
+        --border: #e2e6ee;
+        --text: #0b0f1a;
+        --text-secondary: #6b7585;
+        --accent: #5865f2;
+        --green: #16a34a;
+        --green-bg: #dcfce7;
+        --red: #dc2626;
+        --red-bg: #fee2e2;
+        --radius: 12px;
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+        font-size: 14px;
+        color: var(--text);
+      }
+      @media (prefers-color-scheme: dark) {
+        :root {
+          --bg: #0f1117;
+          --bg-secondary: #1a1d27;
+          --bg-hover: #222638;
+          --border: #2a2f42;
+          --text: #e8eaf0;
+          --text-secondary: #7a8099;
+          --accent: #7c85ff;
+          --green: #22c55e;
+          --green-bg: #052e16;
+          --red: #f87171;
+          --red-bg: #2d0a0a;
+        }
+      }
+      *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+      html, body { width: 100%; background: var(--bg); }
+      body { padding: 12px; }
+      #app { max-width: 780px; margin: 0 auto; }
+
+      /* Header */
+      #header {
+        display: flex; align-items: center; justify-content: space-between;
+        margin-bottom: 12px;
+      }
+      .header-left { display: flex; align-items: center; gap: 8px; }
+      .header-left h2 { font-size: 1rem; font-weight: 700; }
+      #live-dot {
+        width: 7px; height: 7px; border-radius: 50%; background: var(--green);
+        box-shadow: 0 0 0 2px var(--green-bg);
+        animation: pulse 2s infinite;
+      }
+      @keyframes pulse {
+        0%, 100% { opacity: 1; } 50% { opacity: 0.4; }
+      }
+      #last-updated { font-size: 0.72rem; color: var(--text-secondary); }
+
+      /* Controls */
+      #controls {
+        display: flex; flex-wrap: wrap; gap: 8px;
+        align-items: center; margin-bottom: 12px;
+      }
+      /* Search */
+      #search-wrap { flex: 1; min-width: 160px; position: relative; }
+      #search-wrap svg {
+        position: absolute; left: 9px; top: 50%; transform: translateY(-50%);
+        color: var(--text-secondary); pointer-events: none;
+      }
+      #search {
+        width: 100%; padding: 7px 10px 7px 30px;
+        border: 1px solid var(--border); border-radius: 8px;
+        background: var(--bg-secondary); color: var(--text);
+        font-size: 0.83rem; outline: none; transition: border-color 0.15s;
+      }
+      #search:focus { border-color: var(--accent); }
+      #search::placeholder { color: var(--text-secondary); }
+
+      /* Button groups */
+      .btn-group {
+        display: flex; border: 1px solid var(--border); border-radius: 8px;
+        overflow: hidden; background: var(--bg-secondary);
+      }
+      .btn-group button {
+        padding: 6px 12px; border: none; background: transparent;
+        color: var(--text-secondary); font-size: 0.8rem; font-weight: 600;
+        cursor: pointer; transition: background 0.12s, color 0.12s; white-space: nowrap;
+      }
+      .btn-group button:not(:last-child) { border-right: 1px solid var(--border); }
+      .btn-group button.active { background: var(--accent); color: #fff; }
+      .btn-group button:not(.active):hover { background: var(--bg-hover); color: var(--text); }
+
+      /* Table */
+      #table-container { position: relative; }
+      #table-wrap {
+        border: 1px solid var(--border); border-radius: var(--radius);
+        overflow: hidden; box-shadow: 0 2px 10px rgba(0,0,0,0.06);
+        overflow-x: auto;
+      }
+      table { width: 100%; border-collapse: collapse; min-width: 500px; }
+      thead tr { background: var(--bg-secondary); border-bottom: 1px solid var(--border); }
+      th {
+        padding: 8px 12px; text-align: left; font-size: 0.72rem; font-weight: 600;
+        color: var(--text-secondary); text-transform: uppercase; letter-spacing: 0.04em;
+        white-space: nowrap; user-select: none;
+      }
+      th.sortable { cursor: pointer; }
+      th.sortable:hover { color: var(--text); }
+      th.sort-active { color: var(--accent); }
+      th .arr { display: inline-block; margin-left: 3px; font-size: 0.7rem; }
+      th:nth-child(n+3) { text-align: right; }
+
+      tbody tr { border-bottom: 1px solid var(--border); transition: background 0.1s; }
+      tbody tr:last-child { border-bottom: none; }
+      tbody tr:hover { background: var(--bg-hover); }
+      td { padding: 8px 12px; vertical-align: middle; white-space: nowrap; }
+      td:nth-child(n+3) { text-align: right; }
+
+      .rank { color: var(--text-secondary); font-size: 0.78rem; font-weight: 500; min-width: 22px; display: inline-block; text-align: right; }
+      .coin-cell { display: flex; align-items: center; gap: 8px; min-width: 140px; }
+      .coin-img {
+        width: 24px; height: 24px; border-radius: 50%; object-fit: cover;
+        flex-shrink: 0; background: var(--bg-secondary);
+      }
+      .coin-img-fallback {
+        width: 24px; height: 24px; border-radius: 50%; background: var(--accent);
+        display: flex; align-items: center; justify-content: center;
+        font-size: 0.6rem; font-weight: 800; color: #fff; flex-shrink: 0;
+      }
+      .coin-name { font-weight: 600; font-size: 0.875rem; }
+      .coin-sym { font-size: 0.7rem; color: var(--text-secondary); font-weight: 500; }
+      .price { font-weight: 600; font-size: 0.875rem; font-variant-numeric: tabular-nums; }
+      .mcap, .vol { font-size: 0.8rem; color: var(--text-secondary); font-variant-numeric: tabular-nums; }
+
+      .badge {
+        display: inline-flex; align-items: center; gap: 2px;
+        padding: 2px 7px; border-radius: 5px;
+        font-size: 0.75rem; font-weight: 700; font-variant-numeric: tabular-nums;
+      }
+      .badge.pos { background: var(--green-bg); color: var(--green); }
+      .badge.neg { background: var(--red-bg); color: var(--red); }
+      .badge.neu { background: var(--bg-secondary); color: var(--text-secondary); }
+
+      /* Loading overlay */
+      #loading-overlay {
+        display: none; position: absolute; inset: 0;
+        background: rgba(15,17,23,0.35); align-items: center; justify-content: center;
+        border-radius: var(--radius); backdrop-filter: blur(3px);
+      }
+      #loading-overlay.show { display: flex; }
+      .spinner {
+        width: 22px; height: 22px; border: 3px solid rgba(255,255,255,0.2);
+        border-top-color: var(--accent); border-radius: 50%;
+        animation: spin 0.65s linear infinite;
+      }
+      @keyframes spin { to { transform: rotate(360deg); } }
+
+      /* Empty state */
+      #empty {
+        display: none; padding: 28px; text-align: center;
+        color: var(--text-secondary); font-size: 0.875rem;
+      }
+      #empty.show { display: block; }
+
+      /* Footer */
+      #footer {
+        margin-top: 8px; display: flex; align-items: center; justify-content: space-between;
+        font-size: 0.7rem; color: var(--text-secondary);
+      }
+      #powered-by a { color: var(--text-secondary); text-decoration: none; }
+      #powered-by a:hover { color: var(--accent); }
+    </style>
+  </head>
+  <body>
+    <div id="app">
+      <!-- Header -->
+      <div id="header">
+        <div class="header-left">
+          <span id="live-dot"></span>
+          <h2>🪙 Crypto Markets</h2>
+        </div>
+        <span id="last-updated"></span>
+      </div>
+
+      <!-- Controls -->
+      <div id="controls">
+        <!-- Interaction 1: Search / filter coins -->
+        <div id="search-wrap">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/>
+          </svg>
+          <input id="search" placeholder="Search name or symbol…" autocomplete="off" />
+        </div>
+
+        <!-- Interaction 2: Change number of coins shown (calls MCP tool) -->
+        <div class="btn-group" id="limit-btns">
+          <button class="lim-btn" data-lim="10">Top 10</button>
+          <button class="lim-btn active" data-lim="25">Top 25</button>
+          <button class="lim-btn" data-lim="50">Top 50</button>
+        </div>
+      </div>
+
+      <!-- Table -->
+      <div id="table-container">
+        <div id="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th style="width:36px">#</th>
+                <th>Coin</th>
+                <th class="sortable sort-active" data-sort="price" id="th-price">
+                  Price (USD) <span class="arr" id="arr-price">↓</span>
+                </th>
+                <th class="sortable" data-sort="marketCap" id="th-marketCap">
+                  Market Cap <span class="arr" id="arr-marketCap"></span>
+                </th>
+                <th class="sortable" data-sort="volume" id="th-volume">
+                  Volume 24H <span class="arr" id="arr-volume"></span>
+                </th>
+                <th class="sortable" data-sort="change24h" id="th-change24h">
+                  24H Change <span class="arr" id="arr-change24h"></span>
+                </th>
+              </tr>
+            </thead>
+            <tbody id="tbody"></tbody>
+          </table>
+          <div id="empty">No coins match your search.</div>
+        </div>
+        <div id="loading-overlay"><div class="spinner"></div></div>
+      </div>
+
+      <!-- Footer -->
+      <div id="footer">
+        <span id="coin-count"></span>
+        <span id="powered-by">
+          Data: <a href="https://coincap.io" target="_blank">CoinCap</a>
+        </span>
+      </div>
+    </div>
+
+    <script type="module">
+      // ── State ──────────────────────────────────────────────────────────────
+      const state = {
+        coins: [],
+        search: "",
+        sortBy: "marketCap",
+        sortDir: "desc",
+        limit: 25,
+        loading: false,
+      };
+
+      // ── Bootstrap ──────────────────────────────────────────────────────────
+      const initData = window.openai?.toolOutput;
+      if (initData) {
+        applyData(initData);
+      } else {
+        loadDirect(25); // fallback for local dev
+      }
+
+      // Listen for host-injected updates
+      window.addEventListener("openai:set_globals", (e) => {
+        const globals = e.detail?.globals;
+        if (globals?.toolOutput) {
+          applyData(globals.toolOutput);
+          state.loading = false;
+          render();
+        }
+      });
+
+      function applyData(data) {
+        if (Array.isArray(data.coins)) state.coins = data.coins;
+        updateLastUpdated(data.lastUpdated);
+        render();
+      }
+
+      // ── Direct fetch fallback (no Athena host) ─────────────────────────────
+      async function loadDirect(limit, search = null) {
+        state.loading = true;
+        render();
+        try {
+          let url = `https://api.coincap.io/v2/assets?limit=${limit}`;
+          if (search) url += `&search=${encodeURIComponent(search)}`;
+          const res = await fetch(url);
+          const json = await res.json();
+          state.coins = (json.data ?? []).map(normalizeCap);
+          updateLastUpdated(new Date().toISOString());
+        } catch (e) {
+          console.error("Direct fetch error:", e);
+        }
+        state.loading = false;
+        render();
+      }
+
+      function normalizeCap(a) {
+        return {
+          id: a.id,
+          rank: parseInt(a.rank, 10) || null,
+          name: a.name,
+          symbol: (a.symbol ?? "").toUpperCase(),
+          price: parseFloat(a.priceUsd) || null,
+          marketCap: parseFloat(a.marketCapUsd) || null,
+          volume: parseFloat(a.volumeUsd24Hr) || null,
+          change24h: parseFloat(a.changePercent24Hr) || null,
+          image: `https://assets.coincap.io/assets/icons/${(a.symbol ?? "").toLowerCase()}@2x.png`,
+        };
+      }
+
+      // ── MCP tool calls ─────────────────────────────────────────────────────
+      async function callGetMarkets(limit) {
+        state.loading = true;
+        state.limit = limit;
+        render();
+        if (window.openai?.callTool) {
+          try {
+            const res = await window.openai.callTool("get_crypto_markets", { limit });
+            if (res?.structuredContent) applyData(res.structuredContent);
+          } catch (e) { console.error(e); }
+        } else {
+          await loadDirect(limit);
+        }
+        state.loading = false;
+        render();
+      }
+
+      // ── UI: limit toggle ───────────────────────────────────────────────────
+      document.querySelectorAll(".lim-btn").forEach(btn => {
+        btn.addEventListener("click", () => {
+          const lim = parseInt(btn.dataset.lim, 10);
+          if (lim === state.limit) return;
+          document.querySelectorAll(".lim-btn").forEach(b => b.classList.remove("active"));
+          btn.classList.add("active");
+          callGetMarkets(lim);
+        });
+      });
+
+      // ── UI: search (client-side instant filter) ────────────────────────────
+      document.getElementById("search").addEventListener("input", (e) => {
+        state.search = e.target.value.trim().toLowerCase();
+        render();
+      });
+
+      // ── UI: sort by column header ──────────────────────────────────────────
+      document.querySelectorAll("th.sortable").forEach(th => {
+        th.addEventListener("click", () => {
+          const col = th.dataset.sort;
+          if (state.sortBy === col) {
+            state.sortDir = state.sortDir === "desc" ? "asc" : "desc";
+          } else {
+            state.sortBy = col;
+            state.sortDir = "desc";
+          }
+          updateSortUI();
+          render();
+        });
+      });
+
+      function updateSortUI() {
+        ["price", "marketCap", "volume", "change24h"].forEach(col => {
+          const th = document.getElementById(`th-${col}`);
+          const arr = document.getElementById(`arr-${col}`);
+          if (!th || !arr) return;
+          if (state.sortBy === col) {
+            th.classList.add("sort-active");
+            arr.textContent = state.sortDir === "desc" ? "↓" : "↑";
+          } else {
+            th.classList.remove("sort-active");
+            arr.textContent = "";
+          }
+        });
+      }
+
+      // ── Render ─────────────────────────────────────────────────────────────
+      function render() {
+        document.getElementById("loading-overlay").classList.toggle("show", state.loading);
+
+        let coins = [...state.coins];
+
+        // Client-side search filter
+        if (state.search) {
+          coins = coins.filter(c =>
+            (c.name ?? "").toLowerCase().includes(state.search) ||
+            (c.symbol ?? "").toLowerCase().includes(state.search)
+          );
+        }
+
+        // Sort
+        coins.sort((a, b) => {
+          const av = a[state.sortBy] ?? 0;
+          const bv = b[state.sortBy] ?? 0;
+          return state.sortDir === "desc" ? bv - av : av - bv;
+        });
+
+        const tbody = document.getElementById("tbody");
+        const empty = document.getElementById("empty");
+        const countEl = document.getElementById("coin-count");
+
+        if (coins.length === 0 && !state.loading) {
+          tbody.innerHTML = "";
+          empty.classList.add("show");
+        } else {
+          empty.classList.remove("show");
+          tbody.innerHTML = coins.map(renderRow).join("");
+
+          // Image error fallback
+          tbody.querySelectorAll("img.coin-img").forEach(img => {
+            img.addEventListener("error", () => {
+              const fb = document.createElement("div");
+              fb.className = "coin-img-fallback";
+              fb.textContent = img.dataset.sym?.slice(0, 2) ?? "?";
+              img.replaceWith(fb);
+            }, { once: true });
+          });
+        }
+
+        countEl.textContent = state.loading ? "" : `${coins.length} coin${coins.length !== 1 ? "s" : ""}`;
+        updateSortUI();
+      }
+
+      function renderRow(c) {
+        const priceFmt = c.price != null
+          ? `$${c.price.toLocaleString("en-US", {
+              maximumFractionDigits: c.price >= 1000 ? 2 : c.price >= 1 ? 4 : 6,
+              minimumFractionDigits: 2,
+            })}`
+          : "—";
+        const mcapFmt = compact(c.marketCap);
+        const volFmt = compact(c.volume);
+
+        const ch = c.change24h;
+        const chFmt = ch != null ? `${ch >= 0 ? "+" : ""}${ch.toFixed(2)}%` : "—";
+        const chClass = ch == null ? "neu" : ch >= 0 ? "pos" : "neg";
+        const chArrow = ch == null ? "" : ch >= 0 ? "▲" : "▼";
+
+        return `<tr>
+          <td><span class="rank">${c.rank ?? "—"}</span></td>
+          <td>
+            <div class="coin-cell">
+              <img class="coin-img" src="${esc(c.image)}" alt="${esc(c.symbol)}" data-sym="${esc(c.symbol)}" loading="lazy" />
+              <div>
+                <div class="coin-name">${esc(c.name)}</div>
+                <div class="coin-sym">${esc(c.symbol)}</div>
+              </div>
+            </div>
+          </td>
+          <td><span class="price">${priceFmt}</span></td>
+          <td><span class="mcap">$${mcapFmt}</span></td>
+          <td><span class="vol">$${volFmt}</span></td>
+          <td><span class="badge ${chClass}">${chArrow} ${chFmt}</span></td>
+        </tr>`;
+      }
+
+      // ── Utilities ──────────────────────────────────────────────────────────
+      function compact(n) {
+        if (n == null) return "—";
+        if (n >= 1e12) return (n / 1e12).toFixed(2) + "T";
+        if (n >= 1e9)  return (n / 1e9).toFixed(2) + "B";
+        if (n >= 1e6)  return (n / 1e6).toFixed(2) + "M";
+        if (n >= 1e3)  return (n / 1e3).toFixed(1) + "K";
+        return n.toFixed(2);
+      }
+
+      function esc(s) {
+        return String(s ?? "").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");
+      }
+
+      function updateLastUpdated(iso) {
+        const el = document.getElementById("last-updated");
+        if (!iso || !el) return;
+        try {
+          el.textContent = `Updated ${new Date(iso).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`;
+        } catch {}
+      }
+
+      render();
+    </script>
+  </body>
+</html>
