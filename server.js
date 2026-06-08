@@ -2,7 +2,27 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { createServer } from "node:http";
 import { readFileSync } from "node:fs";
+import { createHash, randomBytes } from "node:crypto";
 import { z } from "zod";
+
+// ── OAuth helpers ──────────────────────────────────────────────────────────
+
+// In-memory stores — reset on cold start, acceptable for a public data server
+const pendingCodes = new Map(); // code -> { redirectUri, codeChallenge, state, expiresAt }
+const activeTokens = new Set(); // bearer token strings
+
+const generateToken = (bytes = 32) => randomBytes(bytes).toString("hex");
+
+function verifyPKCE(verifier, challenge) {
+  return createHash("sha256").update(verifier).digest("base64url") === challenge;
+}
+
+const readBody  = (req) => new Promise((resolve) => {
+  let data = ""; req.on("data", (c) => (data += c)); req.on("end", () => resolve(data));
+});
+
+const baseUrl = (req) =>
+  `https://${req.headers.host ?? "athenacrypto.onrender.com"}`;
 
 const widgetHtml = readFileSync("public/widget.html", "utf8");
 
@@ -230,7 +250,7 @@ const MCP_PATH = "/mcp";
 const CORS = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Methods": "POST, GET, DELETE, OPTIONS",
-  "Access-Control-Allow-Headers": "content-type, mcp-session-id",
+  "Access-Control-Allow-Headers": "content-type, mcp-session-id, authorization",
   "Access-Control-Expose-Headers": "Mcp-Session-Id",
 };
 
@@ -247,8 +267,124 @@ const httpServer = createServer(async (req, res) => {
     return;
   }
 
+  // ── OAuth: discovery metadata (RFC 8414) ──────────────────────────────────
+  if (req.method === "GET" && url.pathname === "/.well-known/oauth-authorization-server") {
+    const base = baseUrl(req);
+    res.writeHead(200, { "content-type": "application/json", ...CORS }).end(JSON.stringify({
+      issuer: base,
+      authorization_endpoint: `${base}/oauth/authorize`,
+      token_endpoint: `${base}/oauth/token`,
+      registration_endpoint: `${base}/oauth/register`,
+      response_types_supported: ["code"],
+      grant_types_supported: ["authorization_code"],
+      code_challenge_methods_supported: ["S256"],
+      token_endpoint_auth_methods_supported: ["none"],
+    }));
+    return;
+  }
+
+  // ── OAuth: dynamic client registration (RFC 7591) ─────────────────────────
+  // Accepts any client — issues a client_id without storing secrets (public server)
+  if (req.method === "POST" && url.pathname === "/oauth/register") {
+    let clientMeta = {};
+    try { clientMeta = JSON.parse(await readBody(req)); } catch (_) {}
+    res.writeHead(201, { "content-type": "application/json", ...CORS }).end(JSON.stringify({
+      client_id: generateToken(16),
+      redirect_uris: clientMeta.redirect_uris ?? [],
+      token_endpoint_auth_method: "none",
+      grant_types: ["authorization_code"],
+      response_types: ["code"],
+    }));
+    return;
+  }
+
+  // ── OAuth: authorization — pass-through, auto-approves immediately ─────────
+  if (req.method === "GET" && url.pathname === "/oauth/authorize") {
+    const { response_type, redirect_uri, code_challenge, state } =
+      Object.fromEntries(url.searchParams);
+
+    if (response_type !== "code" || !redirect_uri || !code_challenge) {
+      res.writeHead(400).end("Invalid OAuth request");
+      return;
+    }
+
+    const code = generateToken(16);
+    pendingCodes.set(code, {
+      redirectUri: redirect_uri,
+      codeChallenge: code_challenge,
+      state,
+      expiresAt: Date.now() + 5 * 60 * 1000, // 5-minute window
+    });
+
+    const redirectUrl = new URL(redirect_uri);
+    redirectUrl.searchParams.set("code", code);
+    if (state) redirectUrl.searchParams.set("state", state);
+
+    // Brief holding page that immediately forwards the code to the client
+    res.writeHead(200, { "content-type": "text/html" }).end(`<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="refresh" content="0;url=${redirectUrl}">
+  <title>Connecting — Athena Crypto</title>
+  <style>
+    body { font-family: system-ui, sans-serif; display: flex; flex-direction: column;
+           align-items: center; justify-content: center; height: 100vh; margin: 0;
+           background: #0f172a; color: #e2e8f0; gap: 12px; }
+    a { color: #38bdf8; }
+  </style>
+</head>
+<body>
+  <p>Connecting to <strong>Athena Crypto MCP</strong>…</p>
+  <p><a href="${redirectUrl}">Click here if not redirected automatically</a></p>
+</body>
+</html>`);
+    return;
+  }
+
+  // ── OAuth: token exchange with PKCE verification ───────────────────────────
+  if (req.method === "POST" && url.pathname === "/oauth/token") {
+    const params      = new URLSearchParams(await readBody(req));
+    const grantType   = params.get("grant_type");
+    const code        = params.get("code");
+    const redirectUri = params.get("redirect_uri");
+    const verifier    = params.get("code_verifier");
+
+    const fail = (err) =>
+      res.writeHead(400, { "content-type": "application/json", ...CORS })
+         .end(JSON.stringify({ error: err }));
+
+    if (grantType !== "authorization_code" || !code || !verifier) return fail("invalid_request");
+
+    const pending = pendingCodes.get(code);
+    if (!pending || pending.expiresAt < Date.now()) return fail("invalid_grant");
+    if (pending.redirectUri !== redirectUri)         return fail("invalid_grant");
+    if (!verifyPKCE(verifier, pending.codeChallenge)) return fail("invalid_grant");
+
+    pendingCodes.delete(code);
+    const accessToken = generateToken(32);
+    activeTokens.add(accessToken);
+
+    res.writeHead(200, { "content-type": "application/json", ...CORS }).end(JSON.stringify({
+      access_token: accessToken,
+      token_type: "Bearer",
+      expires_in: 2592000, // 30 days
+    }));
+    return;
+  }
+
   if (url.pathname.startsWith(MCP_PATH) && ["POST", "GET", "DELETE"].includes(req.method ?? "")) {
     Object.entries(CORS).forEach(([k, v]) => res.setHeader(k, v));
+
+    // Reject requests that haven't completed the OAuth flow
+    const authHeader = req.headers["authorization"] ?? "";
+    const token = authHeader.startsWith("Bearer ") ? authHeader.slice(7) : null;
+    if (!token || !activeTokens.has(token)) {
+      res.writeHead(401, { "content-type": "application/json" })
+        .end(JSON.stringify({ error: "unauthorized", message: "Connect via OAuth first." }));
+      return;
+    }
+
     const server = createCryptoServer();
     const transport = new StreamableHTTPServerTransport({
       sessionIdGenerator: undefined,
@@ -272,5 +408,6 @@ httpServer.listen(port, () => {
   console.log(`\n🪙  Crypto Markets MCP server`);
   console.log(`   Data:      CryptoCompare API (free, no key)`);
   console.log(`   Listening: http://localhost:${port}${MCP_PATH}`);
-  console.log(`   Health:    http://localhost:${port}/\n`);
+  console.log(`   Health:    http://localhost:${port}/`);
+  console.log(`   OAuth:     http://localhost:${port}/.well-known/oauth-authorization-server\n`);
 });
