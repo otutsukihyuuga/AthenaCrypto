@@ -376,15 +376,6 @@ const httpServer = createServer(async (req, res) => {
   if (url.pathname.startsWith(MCP_PATH) && ["POST", "GET", "DELETE"].includes(req.method ?? "")) {
     Object.entries(CORS).forEach(([k, v]) => res.setHeader(k, v));
 
-    // Reject requests that haven't completed the OAuth flow
-    const authHeader = req.headers["authorization"] ?? "";
-    const token = authHeader.startsWith("Bearer ") ? authHeader.slice(7) : null;
-    if (!token || !activeTokens.has(token)) {
-      res.writeHead(401, { "content-type": "application/json" })
-        .end(JSON.stringify({ error: "unauthorized", message: "Connect via OAuth first." }));
-      return;
-    }
-
     const server = createCryptoServer();
     const transport = new StreamableHTTPServerTransport({
       sessionIdGenerator: undefined,
