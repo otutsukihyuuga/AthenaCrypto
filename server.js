@@ -125,21 +125,14 @@ async function searchSymbols(query) {
 }
 
 function buildResponse(coins, { search = null }) {
-  const top = coins[0];
-  const priceStr = top?.price
-    ? `$${top.price.toLocaleString("en-US", { maximumFractionDigits: 2 })}`
-    : "N/A";
-  const summary = search
-    ? `Found ${coins.length} result(s) for "${search}". ${top ? `${top.name} is at ${priceStr} USD.` : ""}`
-    : `Showing top ${coins.length} cryptocurrencies by market cap. ${top ? `${top.name} leads at ${priceStr} USD.` : ""}`;
-
+  const structured = {
+    coins,
+    lastUpdated: new Date().toISOString(),
+    ...(search ? { search } : {}),
+  };
   return {
-    content: [{ type: "text", text: summary }],
-    structuredContent: {
-      coins,
-      lastUpdated: new Date().toISOString(),
-      ...(search ? { search } : {}),
-    },
+    content: [{ type: "text", text: JSON.stringify(structured) }],
+    structuredContent: structured,
     _meta: {
       "openai/outputTemplate": "ui://widget/crypto-markets.html",
     },
@@ -205,8 +198,8 @@ function createCryptoServer() {
       } catch (err) {
         console.error("get_crypto_markets error:", err);
         return {
-          content: [{ type: "text", text: `Could not fetch market data: ${err.message}` }],
-          structuredContent: { coins: [], lastUpdated: new Date().toISOString() },
+          content: [{ type: "text", text: JSON.stringify({ error: err.message, coins: [], lastUpdated: new Date().toISOString() }) }],
+          structuredContent: { error: err.message, coins: [], lastUpdated: new Date().toISOString() },
         };
       }
     }
@@ -237,8 +230,8 @@ function createCryptoServer() {
       } catch (err) {
         console.error("search_crypto error:", err);
         return {
-          content: [{ type: "text", text: `Search error: ${err.message}` }],
-          structuredContent: { coins: [], lastUpdated: new Date().toISOString() },
+          content: [{ type: "text", text: JSON.stringify({ error: err.message, coins: [], lastUpdated: new Date().toISOString() }) }],
+          structuredContent: { error: err.message, coins: [], lastUpdated: new Date().toISOString() },
         };
       }
     }
