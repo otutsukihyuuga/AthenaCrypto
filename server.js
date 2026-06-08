@@ -26,16 +26,21 @@ const baseUrl = (req) =>
 
 const widgetHtml = readFileSync("public/widget.html", "utf8");
 
-// ── CryptoCompare API – free, no key required for basic usage ──────────────
-const CC_BASE = "https://min-api.cryptocompare.com/data";
-const CC_IMG  = "https://www.cryptocompare.com";
+// ── CryptoCompare API ──────────────────────────────────────────────────────
+const CC_BASE   = "https://min-api.cryptocompare.com/data";
+const CC_IMG    = "https://www.cryptocompare.com";
+const CC_HEADERS = {
+  Accept: "application/json",
+  "User-Agent": "athena-crypto-mcp/1.0",
+  ...(process.env.CC_API_KEY ? { authorization: `Apikey ${process.env.CC_API_KEY}` } : {}),
+};
 
 async function fetchTopCoins(limit = 25) {
   // Fetch extra to account for coins that may lack USD data
   const fetchLimit = Math.min(limit * 3, 150);
   const url = `${CC_BASE}/top/mktcapfull?limit=${fetchLimit}&tsym=USD`;
   const res = await fetch(url, {
-    headers: { Accept: "application/json", "User-Agent": "athena-crypto-mcp/1.0" },
+    headers: CC_HEADERS,
   });
   if (!res.ok) throw new Error(`CryptoCompare error ${res.status}`);
   const json = await res.json();
@@ -53,7 +58,7 @@ async function fetchCoinsBySymbols(symbols) {
   const fsyms = symbols.slice(0, 15).join(",");
   const url = `${CC_BASE}/pricemultifull?fsyms=${encodeURIComponent(fsyms)}&tsyms=USD`;
   const res = await fetch(url, {
-    headers: { Accept: "application/json", "User-Agent": "athena-crypto-mcp/1.0" },
+    headers: CC_HEADERS,
   });
   if (!res.ok) throw new Error(`CryptoCompare pricemultifull error ${res.status}`);
   const json = await res.json();
@@ -108,7 +113,7 @@ function normalizeCC(d, fallbackRank) {
 // Simple coin-name→symbol lookup for search (CryptoCompare search by name)
 async function searchSymbols(query) {
   const url = `${CC_BASE}/top/mktcapfull?limit=100&tsym=USD`;
-  const res = await fetch(url, { headers: { Accept: "application/json" } });
+  const res = await fetch(url, { headers: CC_HEADERS });
   const json = await res.json();
   const q = query.toLowerCase();
   const matches = (json.Data ?? []).filter((d) => {
