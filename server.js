@@ -43,12 +43,12 @@ async function fetchTopCoins(limit = 25) {
   const res = await fetch(url, {
     headers: CC_HEADERS,
   });
-  if (!res.ok) throw new Error(`CryptoCompare error ${res.status}`);
-  const json = await res.json();
-  if (json.Response === "Error") throw new Error(json.Message ?? "CryptoCompare error");
+  const json = await res.json().catch(() => ({}));
+  if (!res.ok || json.Response === "Error" || json.Err?.message)
+    throw new Error(json.Message ?? json.Err?.message ?? `CryptoCompare error ${res.status}`);
 
   // Filter to coins that have valid USD price data
-  const valid = (json.Data ?? []).filter(
+  const valid = (Array.isArray(json.Data) ? json.Data : []).filter(
     (d) => d?.RAW?.USD?.PRICE > 0 && d?.CoinInfo?.Name
   );
 
@@ -161,8 +161,7 @@ function createCryptoServer() {
           "openai/widgetDomain": "https://athenachat.bot",
           "openai/widgetCSP": {
             connect_domains: [
-              "https://min-api.cryptocompare.com",
-              "https://www.cryptocompare.com",
+              "https://athenacrypto.onrender.com",
             ],
             resource_domains: [
               "https://www.cryptocompare.com",
@@ -263,6 +262,21 @@ const httpServer = createServer(async (req, res) => {
     res.writeHead(200, { "content-type": "application/json", ...CORS }).end(
       JSON.stringify({ status: "ok", name: "crypto-markets-mcp", version: "1.0.0", source: "CryptoCompare API" })
     );
+    return;
+  }
+
+  // ── Widget data proxy — keeps the CryptoCompare API key server-side ───────
+  if (req.method === "GET" && url.pathname === "/api/markets") {
+    const limit = Math.max(10, Math.min(50, Number(url.searchParams.get("limit")) || 25));
+    try {
+      const coins = await fetchTopCoins(limit);
+      res.writeHead(200, { "content-type": "application/json", ...CORS })
+         .end(JSON.stringify({ coins, lastUpdated: new Date().toISOString() }));
+    } catch (err) {
+      console.error("/api/markets error:", err);
+      res.writeHead(502, { "content-type": "application/json", ...CORS })
+         .end(JSON.stringify({ error: err.message, coins: [] }));
+    }
     return;
   }
 

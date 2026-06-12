@@ -203,34 +203,22 @@
         render();
       }
 
-      // ── Fallback (no Athena host) ─────────────────────────────────────────
+      // ── Fallback (no Athena host) — proxied through our server, which
+      //    holds the CryptoCompare API key (direct browser calls now 401) ────
+      const API_BASE = "https://athenacrypto.onrender.com";
       async function loadDirect(limit) {
         S.loading = true; render();
         try {
-          const fetchLim = Math.min(limit * 3, 100); // CryptoCompare caps limit at 100
-          const r = await fetch(`https://min-api.cryptocompare.com/data/top/mktcapfull?limit=${fetchLim}&tsym=USD`);
+          const r = await fetch(`${API_BASE}/api/markets?limit=${limit}`);
           const j = await r.json();
-          const valid = (j.Data ?? []).filter(d => d?.RAW?.USD?.PRICE > 0 && d?.CoinInfo?.Name);
-          S.coins = valid.slice(0, limit).map((d, i) => normCC(d, i + 1));
-          setTs(new Date().toISOString());
+          if (Array.isArray(j.coins) && j.coins.length) {
+            S.coins = j.coins;
+            setTs(j.lastUpdated ?? new Date().toISOString());
+          } else if (j.error) {
+            console.error("markets proxy error:", j.error);
+          }
         } catch (e) { console.error(e); }
         S.loading = false; render();
-      }
-
-      function normCC(d, fb) {
-        const info = d.CoinInfo ?? {}, raw = d.RAW?.USD ?? {};
-        return {
-          id: (info.Name ?? "").toLowerCase(),
-          rank: raw.MKTCAPRANK ?? fb,
-          name: info.FullName ?? info.Name ?? "?",
-          symbol: (info.Name ?? "").toUpperCase(),
-          price: raw.PRICE ?? null,
-          marketCap: raw.MKTCAP ?? null,
-          volume: raw.TOTALVOLUME24H ?? null,
-          change1h: raw.CHANGEPCTHOUR ?? null,
-          change24h: raw.CHANGEPCT24HOUR ?? null,
-          image: info.ImageUrl ? `https://www.cryptocompare.com${info.ImageUrl}` : null,
-        };
       }
 
       // ── MCP tool calls ───────────────────────────────────────────────────
