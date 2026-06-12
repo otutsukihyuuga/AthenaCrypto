@@ -207,7 +207,7 @@
       async function loadDirect(limit) {
         S.loading = true; render();
         try {
-          const fetchLim = Math.min(limit * 3, 150);
+          const fetchLim = Math.min(limit * 3, 100); // CryptoCompare caps limit at 100
           const r = await fetch(`https://min-api.cryptocompare.com/data/top/mktcapfull?limit=${fetchLim}&tsym=USD`);
           const j = await r.json();
           const valid = (j.Data ?? []).filter(d => d?.RAW?.USD?.PRICE > 0 && d?.CoinInfo?.Name);

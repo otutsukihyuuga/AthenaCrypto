@@ -37,7 +37,8 @@ const CC_HEADERS = {
 
 async function fetchTopCoins(limit = 25) {
   // Fetch extra to account for coins that may lack USD data
-  const fetchLimit = Math.min(limit * 3, 150);
+  // (CryptoCompare caps the limit param at 100 — anything above errors out)
+  const fetchLimit = Math.min(limit * 3, 100);
   const url = `${CC_BASE}/top/mktcapfull?limit=${fetchLimit}&tsym=USD`;
   const res = await fetch(url, {
     headers: CC_HEADERS,
