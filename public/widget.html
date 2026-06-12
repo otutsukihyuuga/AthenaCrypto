@@ -199,6 +199,11 @@
 
       function apply(data) {
         if (Array.isArray(data.coins)) S.coins = data.coins;
+        // Sync the Top-N selector with what the tool actually returned
+        // (skip for search results — they aren't a top-N list)
+        if (!data.search && S.coins.length) {
+          S.limit = [10, 25, 50].find(o => o >= S.coins.length) ?? 50;
+        }
         setTs(data.lastUpdated);
         render();
       }
@@ -258,8 +263,6 @@
         btn.addEventListener("click", () => {
           const lim = parseInt(btn.dataset.lim, 10);
           if (lim === S.limit) return;
-          document.querySelectorAll(".lm").forEach(b => b.classList.remove("on"));
-          btn.classList.add("on");
           callMarkets(lim);
         });
       });
@@ -276,6 +279,10 @@
       // ── Render ───────────────────────────────────────────────────────────
       function render() {
         document.getElementById("lo").classList.toggle("on", S.loading);
+
+        // Keep the Top-N selector highlight in sync with state
+        document.querySelectorAll(".lm").forEach(b =>
+          b.classList.toggle("on", parseInt(b.dataset.lim, 10) === S.limit));
 
         // Update change column header label
         document.getElementById("th-change").childNodes[0].textContent =
